@@ -1,0 +1,136 @@
+# ESPHome LED Matrix Display Configuration
+# Device: ESP32-C3 with 16x8 LED Matrix
+# Features: Text display from Home Assistant
+
+substitutions:
+  device_name: ledmatrix
+  friendly_name: "Living Room LED Matrix"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  comment: "16x8 LED Matrix Display with text from Home Assistant"
+  project:
+    name: "custom.led_matrix"
+    version: "1.0"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: arduino
+
+# Enable logging with appropriate level
+logger:
+  level: INFO
+
+# Enable Home Assistant API
+api:
+  password: !secret api_password
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: !secret fallback_ssid
+    password: !secret fallback_password
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 2
+
+# =============================================================================
+# SENSORS
+# =============================================================================
+
+# 1. Text sensor to get the string to display from Home Assistant
+text_sensor:
+  - platform: homeassistant
+    id: ha_display_text
+    # IMPORTANT: Create an input_text helper in Home Assistant and change this entity_id
+    entity_id: input_text.led_matrix_text 
+    internal: true # Internal, as we only use it in lambdas
+    on_value:
+      # When the text in Home Assistant changes, update the display
+      then:
+        - component.update: led_matrix_display
+
+# 2. Dummy number sensor (for testing without Home Assistant)
+sensor:
+  - platform: template
+    name: "Dummy Number"
+    id: dummy_number
+    lambda: |- 
+      return 12345.0;
+    update_interval: 60s # No need to update frequently
+
+# =============================================================================
+# FONTS
+# =============================================================================
+
+font:
+  #  Press Start 2P (monospaced)
+  - file: "gfonts://Press Start 2P"
+    id: matrix_font
+    size: 8
+    glyphs: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,!?-:()°% "
+
+# =============================================================================
+# LED MATRIX DISPLAY
+# =============================================================================
+display:
+  - platform: addressable_light
+    id: led_matrix_display
+    addressable_light_id: matrix_light
+    width: 16
+    height: 8
+    rotation: 0
+    pixel_mapper: |-
+      if (y % 2 == 0) {
+        return (y * 16) + x;
+      } else {
+        return (y * 16) + (15 - x);
+      }
+    lambda: |-
+      // Create a subtle animated background
+      static int frame = 0;
+      frame++;
+      
+      // Fill with a dim, slowly changing background color
+      int r = (sin(frame * 0.01) * 10) + 15;
+      int g = (sin(frame * 0.013) * 8) + 10;
+      int b = (sin(frame * 0.017) * 12) + 20;
+      it.fill(Color(r, g, b));
+      
+      // Determine number color based on value for visual feedback
+      Color number_color;
+      float value = id(dummy_number).state;
+      if (value > 50000) {
+        number_color = Color(255, 50, 50);    // Red for high values
+      } else if (value > 10000) {
+        number_color = Color(255, 165, 0);    // Orange for medium values
+      } else if (value > 1000) {
+        number_color = Color(50, 255, 50);    // Green for normal values
+      } else {
+        number_color = Color(100, 100, 255);  // Blue for low values
+      }
+      
+      // Print the number with dynamic color
+      it.printf(0, 0, id(matrix_font), number_color, "%.0f", value);
+
+light:
+  - platform: fastled_clockless
+    id: matrix_light
+    chipset: SK6812
+    pin: GPIO3
+    num_leds: 128
+    rgb_order: GRB
+    name: "LED Matrix Light"
+
